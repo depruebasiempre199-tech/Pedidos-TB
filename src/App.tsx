@@ -479,6 +479,7 @@ export default function PedidosPrototype() {
   const [vistaResumen, setVistaResumen] = useState(false);
   const [resumenDia, setResumenDia] = useState("Todos");
   const [resumenMostrarTodos, setResumenMostrarTodos] = useState(false);
+  const [columnasCompactas, setColumnasCompactas] = useState(true);
 
   useEffect(() => {
     fetchHistorial()
@@ -539,12 +540,30 @@ export default function PedidosPrototype() {
     setNuevoProveedor({ nombre: "", tipo: "externo" });
   };
 
+  const moveProveedor = (nombre, direction) => {
+    setProveedoresList((prev) => {
+      const idx = prev.findIndex((p) => p.nombre === nombre);
+      const newIdx = idx + direction;
+      if (idx < 0 || newIdx < 0 || newIdx >= prev.length) return prev;
+      const next = [...prev];
+      [next[idx], next[newIdx]] = [next[newIdx], next[idx]];
+      return next;
+    });
+  };
+
+  const updateProveedorTipo = (nombre, tipo) => {
+    setProveedoresList((prev) => prev.map((p) => (p.nombre === nombre ? { ...p, tipo } : p)));
+    setRows((prev) => prev.map((r) => (r.proveedor === nombre ? { ...r, tipo } : r)));
+  };
+
   const eliminarProveedor = (nombre) => {
     setProveedoresList((prev) => prev.filter((p) => p.nombre !== nombre));
     setRows((prev) => prev.filter((r) => r.proveedor !== nombre));
     setSchedule((prev) => {
-      const next = { ...prev };
-      delete next[nombre];
+      const next = {};
+      Object.entries(prev).forEach(([k, v]) => {
+        if (k !== nombre && !k.startsWith(`${nombre}|`)) next[k] = v;
+      });
       return next;
     });
     setDiaProveedores((prev) => {
@@ -732,7 +751,7 @@ export default function PedidosPrototype() {
       dia: r.dia,
       cantidad: r.pedir,
       unidad: r.unidad,
-      fecha: formatDate(nextDateForWeekday(fechaPedido, schedule[r.proveedor] || "Lunes")),
+      fecha: formatDate(nextDateForWeekday(fechaPedido, schedule[`${r.proveedor}|${r.dia}`] || "Lunes")),
     }));
   const resumenItems = resumenTodos.filter((i) => i.cantidad > 0);
 
@@ -976,6 +995,7 @@ export default function PedidosPrototype() {
               <table style={{ borderCollapse: "collapse", fontSize: 12 }}>
                 <thead>
                   <tr>
+                    <th style={{ padding: "4px 6px", color: "var(--text-secondary)", fontWeight: 500 }}>Orden</th>
                     <th style={{ textAlign: "left", padding: "4px 10px", color: "var(--text-secondary)", fontWeight: 500 }}>Proveedor</th>
                     <th style={{ padding: "4px 10px", color: "var(--text-secondary)", fontWeight: 500 }}>Tipo</th>
                     {DIAS_PEDIDO.map((d) => (
@@ -985,10 +1005,35 @@ export default function PedidosPrototype() {
                   </tr>
                 </thead>
                 <tbody>
-                  {proveedoresList.map(({ nombre: prov, tipo: tp }) => (
+                  {proveedoresList.map(({ nombre: prov, tipo: tp }, idx) => (
                     <tr key={prov} style={{ borderTop: "1px solid var(--border)" }}>
+                      <td style={{ padding: "4px 6px" }}>
+                        <div style={{ display: "flex", gap: 2 }}>
+                          <button
+                            onClick={() => moveProveedor(prov, -1)}
+                            disabled={idx === 0}
+                            title="Subir"
+                            style={{ ...miniButtonStyle, opacity: idx === 0 ? 0.35 : 1, cursor: idx === 0 ? "default" : "pointer" }}
+                          >
+                            <ChevronUp size={12} />
+                          </button>
+                          <button
+                            onClick={() => moveProveedor(prov, 1)}
+                            disabled={idx === proveedoresList.length - 1}
+                            title="Bajar"
+                            style={{ ...miniButtonStyle, opacity: idx === proveedoresList.length - 1 ? 0.35 : 1, cursor: idx === proveedoresList.length - 1 ? "default" : "pointer" }}
+                          >
+                            <ChevronDown size={12} />
+                          </button>
+                        </div>
+                      </td>
                       <td style={{ padding: "4px 10px" }}>{prov}</td>
-                      <td style={{ padding: "4px 10px", textAlign: "center", color: "var(--text-secondary)" }}>{tp}</td>
+                      <td style={{ padding: "4px 10px", textAlign: "center" }}>
+                        <select value={tp} onChange={(e) => updateProveedorTipo(prov, e.target.value)} style={{ fontSize: 11.5, border: "1px solid var(--border)", borderRadius: 6, padding: "2px 4px", color: "var(--text-primary)", background: "var(--card)" }}>
+                          <option value="externo">externo</option>
+                          <option value="interno">interno</option>
+                        </select>
+                      </td>
                       {DIAS_PEDIDO.map((d) => (
                         <td key={d} style={{ padding: "4px 10px", textAlign: "center" }}>
                           <input type="checkbox" checked={diaProveedores[d].has(prov)} onChange={() => toggleProveedorDia(prov, d)} />
@@ -1029,22 +1074,28 @@ export default function PedidosPrototype() {
             </div>
           </Accordion>
 
-          <Accordion title="4. Calendario de despacho por proveedor" isOpen={sectionOpen.calendario} onToggle={() => toggleSection("calendario")}>
+          <Accordion title="4. Calendario de despacho por proveedor y día de pedido" isOpen={sectionOpen.calendario} onToggle={() => toggleSection("calendario")}>
             <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 10 }}>
               <span style={{ fontSize: 12 }}>Fecha del pedido</span>
               <input type="date" value={fechaPedido} onChange={(e) => setFechaPedido(e.target.value)} style={selectStyle} />
             </div>
+            <div style={{ fontSize: 11, color: "var(--text-secondary)", marginBottom: 8 }}>
+              Cada combinación de proveedor + día de pedido tiene su propio día de entrega (por ejemplo, Ristreto puede entregar Jueves lo pedido el Domingo, y Martes lo pedido el Martes).
+            </div>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
-              {todosProveedores.map((prov) => (
-                <div key={prov} style={{ display: "flex", alignItems: "center", gap: 6, border: "1px solid var(--border)", borderRadius: 8, padding: "6px 10px" }}>
-                  <span style={{ fontSize: 12 }}>{prov}</span>
-                  <select value={schedule[prov] || "Lunes"} onChange={(e) => updateSchedule(prov, e.target.value)} style={{ fontSize: 12, border: "1px solid var(--border)", borderRadius: 6, padding: "2px 4px" }}>
-                    {WEEKDAYS.map((w) => (
-                      <option key={w} value={w}>{w}</option>
-                    ))}
-                  </select>
-                </div>
-              ))}
+              {proveedorDiaKeys.map((key) => {
+                const [prov, d] = key.split("|");
+                return (
+                  <div key={key} style={{ display: "flex", alignItems: "center", gap: 6, border: "1px solid var(--border)", borderRadius: 8, padding: "6px 10px" }}>
+                    <span style={{ fontSize: 12 }}>{prov} · {d}</span>
+                    <select value={schedule[key] || "Lunes"} onChange={(e) => updateSchedule(key, e.target.value)} style={{ fontSize: 12, border: "1px solid var(--border)", borderRadius: 6, padding: "2px 4px" }}>
+                      {WEEKDAYS.map((w) => (
+                        <option key={w} value={w}>{w}</option>
+                      ))}
+                    </select>
+                  </div>
+                );
+              })}
             </div>
           </Accordion>
 
@@ -1144,6 +1195,9 @@ export default function PedidosPrototype() {
         >
           <Printer size={13} /> Ver resumen para descargar / imprimir
         </button>
+        <button onClick={() => setColumnasCompactas((v) => !v)} style={buttonStyle}>
+          {columnasCompactas ? "Ver todas las columnas" : "Vista compacta"}
+        </button>
       </div>
 
       <div className="pp-table-wrap" style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: 12, overflow: "hidden", boxShadow: "var(--shadow)" }}>
@@ -1151,7 +1205,10 @@ export default function PedidosPrototype() {
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
             <thead>
               <tr style={{ background: "var(--header-bg)", textAlign: "left" }}>
-                {["Producto", "Proveedor", "Tipo", "Unidad compra", "U. base", "Consumo/día", "Días obj.", "Cobertura", "Existencia", "Tránsito", "Proyección", "Pedir", "Fecha despacho", ""].map((h) => (
+                {(columnasCompactas
+                  ? ["Producto", "Proveedor", "Cobertura", "Existencia", "Tránsito", "Pedir", ""]
+                  : ["Producto", "Proveedor", "Tipo", "Unidad compra", "U. base", "Consumo/día", "Días obj.", "Cobertura", "Existencia", "Tránsito", "Proyección", "Pedir", "Fecha despacho", ""]
+                ).map((h) => (
                   <th key={h} style={{ padding: "11px 12px", fontWeight: 500, color: "var(--header-text)", whiteSpace: "nowrap", fontSize: 10.5, textTransform: "uppercase", letterSpacing: 0.5 }}>
                     {h}
                   </th>
@@ -1160,39 +1217,45 @@ export default function PedidosPrototype() {
             </thead>
             <tbody>
               {filtered.map((r) => {
-                const despachoDate = nextDateForWeekday(fechaPedido, schedule[r.proveedor] || "Lunes");
+                const despachoDate = nextDateForWeekday(fechaPedido, schedule[`${r.proveedor}|${r.dia}`] || "Lunes");
                 return (
                   <tr key={r.id} style={{ borderTop: "1px solid var(--border)", borderLeft: `3px solid ${r.tipo === "externo" ? "var(--accent-ext)" : "var(--accent-int)"}` }}>
                     <td style={{ padding: "6px 12px", minWidth: 180 }}>
                       <input type="text" value={r.producto} onChange={(e) => updateText(r.id, "producto", e.target.value)} style={textInputStyle} />
                     </td>
                     <td style={{ padding: "10px 12px", color: "var(--text-secondary)" }}>{r.proveedor}</td>
-                    <td style={{ padding: "10px 12px" }}>
-                      <span
-                        style={{
-                          fontSize: 10.5,
-                          fontWeight: 500,
-                          padding: "2px 8px",
-                          borderRadius: 20,
-                          background: r.tipo === "externo" ? "#F0E6DC" : "#F5EBC8",
-                          color: r.tipo === "externo" ? "var(--accent-ext)" : "var(--accent-int)",
-                        }}
-                      >
-                        {r.tipo}
-                      </span>
-                    </td>
-                    <td style={{ padding: "6px 12px", minWidth: 120 }}>
-                      <input type="text" value={r.unidad} onChange={(e) => updateText(r.id, "unidad", e.target.value)} style={textInputStyle} />
-                    </td>
-                    <td style={{ padding: "6px 12px" }}>
-                      <select value={r.unidadBase} onChange={(e) => updateUnidadBase(r.id, e.target.value)} style={{ ...selectStyle, padding: "4px 6px", fontSize: 12 }}>
-                        {UNIDADES_BASE.map((u) => (
-                          <option key={u} value={u}>{u}</option>
-                        ))}
-                      </select>
-                    </td>
-                    <td style={{ padding: "10px 12px", fontFamily: "var(--mono)" }}>{r.diario.toFixed(2)}</td>
-                    <td style={{ padding: "10px 12px", fontFamily: "var(--mono)" }}>{r.diasInv}</td>
+                    {!columnasCompactas && (
+                      <td style={{ padding: "10px 12px" }}>
+                        <span
+                          style={{
+                            fontSize: 10.5,
+                            fontWeight: 500,
+                            padding: "2px 8px",
+                            borderRadius: 20,
+                            background: r.tipo === "externo" ? "#F0E6DC" : "#F5EBC8",
+                            color: r.tipo === "externo" ? "var(--accent-ext)" : "var(--accent-int)",
+                          }}
+                        >
+                          {r.tipo}
+                        </span>
+                      </td>
+                    )}
+                    {!columnasCompactas && (
+                      <td style={{ padding: "6px 12px", minWidth: 120 }}>
+                        <input type="text" value={r.unidad} onChange={(e) => updateText(r.id, "unidad", e.target.value)} style={textInputStyle} />
+                      </td>
+                    )}
+                    {!columnasCompactas && (
+                      <td style={{ padding: "6px 12px" }}>
+                        <select value={r.unidadBase} onChange={(e) => updateUnidadBase(r.id, e.target.value)} style={{ ...selectStyle, padding: "4px 6px", fontSize: 12 }}>
+                          {UNIDADES_BASE.map((u) => (
+                            <option key={u} value={u}>{u}</option>
+                          ))}
+                        </select>
+                      </td>
+                    )}
+                    {!columnasCompactas && <td style={{ padding: "10px 12px", fontFamily: "var(--mono)" }}>{r.diario.toFixed(2)}</td>}
+                    {!columnasCompactas && <td style={{ padding: "10px 12px", fontFamily: "var(--mono)" }}>{r.diasInv}</td>}
                     <td style={{ padding: "10px 12px" }}>
                       <Bar cobertura={r.cobertura} objetivo={r.diasInv} />
                     </td>
@@ -1213,9 +1276,11 @@ export default function PedidosPrototype() {
                         onChange={(v) => update(r.id, "transito", v)}
                       />
                     </td>
-                    <td style={{ padding: "10px 12px", fontFamily: "var(--mono)", color: r.proyeccion < 0 ? "var(--text-secondary)" : "var(--text-primary)" }}>
-                      {r.proyeccion.toFixed(1)}
-                    </td>
+                    {!columnasCompactas && (
+                      <td style={{ padding: "10px 12px", fontFamily: "var(--mono)", color: r.proyeccion < 0 ? "var(--text-secondary)" : "var(--text-primary)" }}>
+                        {r.proyeccion.toFixed(1)}
+                      </td>
+                    )}
                     <td style={{ padding: "6px 12px" }}>
                       <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
                         <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
@@ -1234,7 +1299,9 @@ export default function PedidosPrototype() {
                         )}
                       </div>
                     </td>
-                    <td style={{ padding: "10px 12px", color: "var(--text-secondary)", whiteSpace: "nowrap" }}>{formatDate(despachoDate)}</td>
+                    {!columnasCompactas && (
+                      <td style={{ padding: "10px 12px", color: "var(--text-secondary)", whiteSpace: "nowrap" }}>{formatDate(despachoDate)}</td>
+                    )}
                     <td style={{ padding: "10px 12px" }}>
                       <button onClick={() => eliminarFila(r.id)} style={dangerLinkStyle}><Trash2 size={12} /></button>
                     </td>
@@ -1251,7 +1318,7 @@ export default function PedidosPrototype() {
           <ProductCard
             key={r.id}
             r={r}
-            despachoLabel={formatDate(nextDateForWeekday(fechaPedido, schedule[r.proveedor] || "Lunes"))}
+            despachoLabel={formatDate(nextDateForWeekday(fechaPedido, schedule[`${r.proveedor}|${r.dia}`] || "Lunes"))}
             updateText={updateText}
             update={update}
             updateUnidadBase={updateUnidadBase}
