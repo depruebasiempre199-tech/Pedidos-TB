@@ -1434,4 +1434,3 @@ const miniButtonStyle = {
   color: "var(--text-primary)",
   lineHeight: 1,
 };
-
