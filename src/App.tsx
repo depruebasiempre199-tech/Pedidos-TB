@@ -23,7 +23,7 @@ import {
   Moon,
   Monitor,
 } from "lucide-react";
-import { fetchHistorial, saveSnapshot, updateSnapshot, fetchEstado, saveEstado } from "./firebase-service";
+import { fetchHistorial, saveSnapshot, updateSnapshot, deleteSnapshot, fetchEstado, saveEstado } from "./firebase-service";
 
 const WEEKDAYS = ["Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"];
 const DIAS_PEDIDO = [...WEEKDAYS];
@@ -105,6 +105,52 @@ function computeRow(r, diasInvConfig) {
   const pedirSugerido = Math.max(0, Math.ceil(proyeccion / r.factor));
   const cobertura = r.existencia / (diario || 1);
   return { ...r, diasInv, diario, proyeccion, pedirSugerido, cobertura };
+}
+
+function PreviewSeleccion({ preview, onToggle, onMarcarTodos, onAplicar, aplicarLabel, colActualLabel }) {
+  if (preview.length === 0) return null;
+  return (
+    <div style={{ marginTop: 14 }}>
+      <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 10, flexWrap: "wrap" }}>
+        <button onClick={() => onMarcarTodos(true)} style={miniButtonStyle}>Marcar todos</button>
+        <button onClick={() => onMarcarTodos(false)} style={miniButtonStyle}>Desmarcar todos</button>
+        <button onClick={onAplicar} style={{ ...buttonStyle, background: "var(--ok)", color: "#fff", borderColor: "var(--ok)" }}>
+          {aplicarLabel}
+        </button>
+        <span style={{ fontSize: 11.5, color: "var(--text-secondary)" }}>
+          {preview.filter((p) => p.aplicar).length} de {preview.length} seleccionados
+        </span>
+      </div>
+      <div style={{ maxHeight: 360, overflowY: "auto", border: "1px solid var(--border)", borderRadius: 8 }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+          <thead>
+            <tr style={{ background: "var(--track)", textAlign: "left" }}>
+              <th style={{ padding: "6px 8px", width: 30 }}></th>
+              <th style={{ padding: "6px 8px" }}>Producto</th>
+              <th style={{ padding: "6px 8px" }}>Proveedor</th>
+              <th style={{ padding: "6px 8px" }}>Día</th>
+              <th style={{ padding: "6px 8px", textAlign: "right" }}>{colActualLabel}</th>
+              <th style={{ padding: "6px 8px", textAlign: "right" }}>Valor nuevo</th>
+            </tr>
+          </thead>
+          <tbody>
+            {preview.map((p) => (
+              <tr key={p.id} style={{ borderTop: "1px solid var(--border)", background: p.aplicar ? "var(--track)" : "transparent" }}>
+                <td style={{ padding: "6px 8px" }}>
+                  <input type="checkbox" checked={p.aplicar} onChange={() => onToggle(p.id)} />
+                </td>
+                <td style={{ padding: "6px 8px" }}>{p.producto}</td>
+                <td style={{ padding: "6px 8px", color: "var(--text-secondary)" }}>{p.proveedor}</td>
+                <td style={{ padding: "6px 8px", color: "var(--text-secondary)" }}>{p.dia}</td>
+                <td style={{ padding: "6px 8px", textAlign: "right", fontFamily: "var(--mono)" }}>{p.actual}</td>
+                <td style={{ padding: "6px 8px", textAlign: "right", fontFamily: "var(--mono)", fontWeight: 600 }}>{p.nuevo}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
 }
 
 function ProductCard({ r, despachoLabel, updateText, update, updateUnidadBase, eliminarFila }) {
@@ -478,6 +524,10 @@ export default function PedidosPrototype() {
   const [uploadStatus, setUploadStatus] = useState("");
   const [existenciaDia, setExistenciaDia] = useState("Jueves");
   const [existenciaUltima, setExistenciaUltima] = useState(() => Object.fromEntries(DIAS_PEDIDO.map((d) => [d, null])));
+  const [existenciaPreview, setExistenciaPreview] = useState([]);
+  const [existenciaArchivo, setExistenciaArchivo] = useState("");
+  const [consumoPreview, setConsumoPreview] = useState([]);
+  const [consumoArchivo, setConsumoArchivo] = useState("");
   const [transitoPreview, setTransitoPreview] = useState([]);
   const [transitoArchivo, setTransitoArchivo] = useState("");
   const [consumoUltima, setConsumoUltima] = useState(null);
@@ -709,21 +759,48 @@ export default function PedidosPrototype() {
         const valor = parseNumeroExcel(row[29]);
         if (nombre && !isNaN(valor)) updates[nombre] = valor;
       });
-      let count = 0;
-      setRows((prev) =>
-        prev.map((r) => {
-          if (updates[normalize(r.producto)] !== undefined) {
-            count++;
-            return { ...r, consumoSemanal: updates[normalize(r.producto)] };
-          }
-          return r;
-        })
+      const preview = rows
+        .filter((r) => updates[normalize(r.producto)] !== undefined)
+        .map((r) => ({
+          id: r.id,
+          producto: r.producto,
+          proveedor: r.proveedor,
+          dia: r.dia,
+          actual: r.consumoSemanal,
+          nuevo: updates[normalize(r.producto)],
+          aplicar: true,
+        }));
+      setConsumoPreview(preview);
+      setConsumoArchivo(file.name);
+      setUploadStatus(
+        preview.length > 0
+          ? `Se encontraron ${preview.length} coincidencias de consumo. Revisá la lista y desmarcá lo que no quieras aplicar.`
+          : "No se encontraron productos coincidentes en el archivo."
       );
-      setUploadStatus(`Consumo semanal actualizado (${count} productos coincidieron).`);
-      setConsumoUltima({ fecha: new Date(), archivo: file.name, count });
     } catch (err) {
       setUploadStatus("No se pudo leer el archivo de consumo semanal.");
     }
+  };
+
+  const toggleConsumoPreview = (id) => {
+    setConsumoPreview((prev) => prev.map((p) => (p.id === id ? { ...p, aplicar: !p.aplicar } : p)));
+  };
+
+  const marcarTodosConsumo = (valor) => {
+    setConsumoPreview((prev) => prev.map((p) => ({ ...p, aplicar: valor })));
+  };
+
+  const aplicarConsumoSeleccionados = () => {
+    const seleccionados = consumoPreview.filter((p) => p.aplicar);
+    if (seleccionados.length === 0) return;
+    const map = {};
+    seleccionados.forEach((p) => {
+      map[p.id] = p.nuevo;
+    });
+    setRows((prev) => prev.map((r) => (map[r.id] !== undefined ? { ...r, consumoSemanal: map[r.id] } : r)));
+    setUploadStatus(`Consumo semanal actualizado en ${seleccionados.length} producto(s).`);
+    setConsumoUltima({ fecha: new Date(), archivo: consumoArchivo, count: seleccionados.length });
+    setConsumoPreview((prev) => prev.filter((p) => !p.aplicar));
   };
 
   const handleExistenciaUpload = async (file) => {
@@ -738,21 +815,48 @@ export default function PedidosPrototype() {
         const valor = parseNumeroExcel(row[16]);
         if (nombre && !isNaN(valor)) updates[nombre] = valor;
       });
-      let count = 0;
-      setRows((prev) =>
-        prev.map((r) => {
-          if (r.dia === existenciaDia && updates[normalize(r.producto)] !== undefined) {
-            count++;
-            return { ...r, existencia: updates[normalize(r.producto)] };
-          }
-          return r;
-        })
+      const preview = rows
+        .filter((r) => r.dia === existenciaDia && updates[normalize(r.producto)] !== undefined)
+        .map((r) => ({
+          id: r.id,
+          producto: r.producto,
+          proveedor: r.proveedor,
+          dia: r.dia,
+          actual: r.existencia,
+          nuevo: updates[normalize(r.producto)],
+          aplicar: true,
+        }));
+      setExistenciaPreview(preview);
+      setExistenciaArchivo(file.name);
+      setUploadStatus(
+        preview.length > 0
+          ? `Se encontraron ${preview.length} coincidencias de existencia para ${existenciaDia}. Revisá la lista y desmarcá lo que no quieras aplicar.`
+          : `No se encontraron productos coincidentes de ${existenciaDia} en el archivo.`
       );
-      setUploadStatus(`Existencia de ${existenciaDia} actualizada (${count} productos coincidieron).`);
-      setExistenciaUltima((prev) => ({ ...prev, [existenciaDia]: { fecha: new Date(), archivo: file.name, count } }));
     } catch (err) {
       setUploadStatus("No se pudo leer el archivo de existencia.");
     }
+  };
+
+  const toggleExistenciaPreview = (id) => {
+    setExistenciaPreview((prev) => prev.map((p) => (p.id === id ? { ...p, aplicar: !p.aplicar } : p)));
+  };
+
+  const marcarTodosExistencia = (valor) => {
+    setExistenciaPreview((prev) => prev.map((p) => ({ ...p, aplicar: valor })));
+  };
+
+  const aplicarExistenciaSeleccionados = () => {
+    const seleccionados = existenciaPreview.filter((p) => p.aplicar);
+    if (seleccionados.length === 0) return;
+    const map = {};
+    seleccionados.forEach((p) => {
+      map[p.id] = p.nuevo;
+    });
+    setRows((prev) => prev.map((r) => (map[r.id] !== undefined ? { ...r, existencia: map[r.id] } : r)));
+    setUploadStatus(`Existencia de ${existenciaDia} actualizada en ${seleccionados.length} producto(s).`);
+    setExistenciaUltima((prev) => ({ ...prev, [existenciaDia]: { fecha: new Date(), archivo: existenciaArchivo, count: seleccionados.length } }));
+    setExistenciaPreview((prev) => prev.filter((p) => !p.aplicar));
   };
 
   const handleTransitoUpload = async (file) => {
@@ -850,6 +954,20 @@ export default function PedidosPrototype() {
         return { ...snap, items };
       })
     );
+  };
+
+  const eliminarSemana = (snapshotId, fecha) => {
+    if (!window.confirm(`¿Eliminar el pedido guardado de la semana del ${fecha}? Esta acción no se puede deshacer.`)) return;
+    setHistorialStatus("Eliminando…");
+    deleteSnapshot(snapshotId)
+      .then((data) => {
+        setHistorial(data);
+        setHistorialStatus(`Semana del ${fecha} eliminada del historial.`);
+      })
+      .catch((err) => {
+        console.error(err);
+        setHistorialStatus("No se pudo eliminar — revisá la conexión.");
+      });
   };
 
   const aplicarComoTransito = (snapshotId) => {
@@ -1141,11 +1259,11 @@ export default function PedidosPrototype() {
             </div>
             <div className="pp-config-inline" style={{ display: "flex", gap: 16, flexWrap: "wrap", alignItems: "flex-end" }}>
               <div>
-                <div style={{ fontSize: 12, marginBottom: 4 }}>Consumo semanal (aplica a toda la tabla)</div>
+                <div style={{ fontSize: 12, marginBottom: 4 }}>Consumo semanal (elegís qué productos aplicar)</div>
                 <input type="file" accept=".xlsx,.xls" onChange={(e) => handleConsumoUpload(e.target.files[0])} style={fileInputStyle} />
               </div>
               <div>
-                <div style={{ fontSize: 12, marginBottom: 4 }}>Existencia para el día</div>
+                <div style={{ fontSize: 12, marginBottom: 4 }}>Existencia para el día (elegís qué productos aplicar)</div>
                 <div style={{ display: "flex", gap: 8 }}>
                   <select value={existenciaDia} onChange={(e) => setExistenciaDia(e.target.value)} style={selectStyle}>
                     {DIAS_PEDIDO.map((d) => (
@@ -1157,6 +1275,34 @@ export default function PedidosPrototype() {
               </div>
             </div>
             {uploadStatus && <div style={{ fontSize: 12, color: "var(--ok)", marginTop: 8 }}>{uploadStatus}</div>}
+            {consumoPreview.length > 0 && (
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 600, marginTop: 14 }}>Vista previa — Consumo semanal ({consumoArchivo})</div>
+                <PreviewSeleccion
+                  preview={consumoPreview}
+                  onToggle={toggleConsumoPreview}
+                  onMarcarTodos={marcarTodosConsumo}
+                  onAplicar={aplicarConsumoSeleccionados}
+                  aplicarLabel="Aplicar seleccionados a Consumo semanal"
+                  colActualLabel="Consumo actual"
+                />
+              </div>
+            )}
+            {existenciaPreview.length > 0 && (
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 600, marginTop: 14 }}>
+                  Vista previa — Existencia {existenciaDia} ({existenciaArchivo})
+                </div>
+                <PreviewSeleccion
+                  preview={existenciaPreview}
+                  onToggle={toggleExistenciaPreview}
+                  onMarcarTodos={marcarTodosExistencia}
+                  onAplicar={aplicarExistenciaSeleccionados}
+                  aplicarLabel="Aplicar seleccionados a Existencia"
+                  colActualLabel="Existencia actual"
+                />
+              </div>
+            )}
             <div style={{ display: "flex", gap: 14, marginTop: 8, flexWrap: "wrap" }}>
               {DIAS_PEDIDO.map((d) => {
                 const u = existenciaUltima[d];
@@ -1178,48 +1324,14 @@ export default function PedidosPrototype() {
             </div>
             <input type="file" accept=".xlsx,.xls" onChange={(e) => handleTransitoUpload(e.target.files[0])} style={fileInputStyle} />
             {uploadStatus && transitoArchivo && <div style={{ fontSize: 12, color: "var(--ok)", marginTop: 8 }}>{uploadStatus}</div>}
-            {transitoPreview.length > 0 && (
-              <div style={{ marginTop: 14 }}>
-                <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 10, flexWrap: "wrap" }}>
-                  <button onClick={() => marcarTodosTransito(true)} style={miniButtonStyle}>Marcar todos</button>
-                  <button onClick={() => marcarTodosTransito(false)} style={miniButtonStyle}>Desmarcar todos</button>
-                  <button onClick={aplicarTransitoSeleccionados} style={{ ...buttonStyle, background: "var(--ok)", color: "#fff", borderColor: "var(--ok)" }}>
-                    Aplicar seleccionados a Tránsito
-                  </button>
-                  <span style={{ fontSize: 11.5, color: "var(--text-secondary)" }}>
-                    {transitoPreview.filter((p) => p.aplicar).length} de {transitoPreview.length} seleccionados
-                  </span>
-                </div>
-                <div style={{ maxHeight: 360, overflowY: "auto", border: "1px solid var(--border)", borderRadius: 8 }}>
-                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
-                    <thead>
-                      <tr style={{ background: "var(--track)", textAlign: "left" }}>
-                        <th style={{ padding: "6px 8px", width: 30 }}></th>
-                        <th style={{ padding: "6px 8px" }}>Producto</th>
-                        <th style={{ padding: "6px 8px" }}>Proveedor</th>
-                        <th style={{ padding: "6px 8px" }}>Día</th>
-                        <th style={{ padding: "6px 8px", textAlign: "right" }}>Tránsito actual</th>
-                        <th style={{ padding: "6px 8px", textAlign: "right" }}>Valor nuevo</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {transitoPreview.map((p) => (
-                        <tr key={p.id} style={{ borderTop: "1px solid var(--border)", background: p.aplicar ? "var(--track)" : "transparent" }}>
-                          <td style={{ padding: "6px 8px" }}>
-                            <input type="checkbox" checked={p.aplicar} onChange={() => toggleTransitoPreview(p.id)} />
-                          </td>
-                          <td style={{ padding: "6px 8px" }}>{p.producto}</td>
-                          <td style={{ padding: "6px 8px", color: "var(--text-secondary)" }}>{p.proveedor}</td>
-                          <td style={{ padding: "6px 8px", color: "var(--text-secondary)" }}>{p.dia}</td>
-                          <td style={{ padding: "6px 8px", textAlign: "right", fontFamily: "var(--mono)" }}>{p.actual}</td>
-                          <td style={{ padding: "6px 8px", textAlign: "right", fontFamily: "var(--mono)", fontWeight: 600 }}>{p.nuevo}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )}
+            <PreviewSeleccion
+              preview={transitoPreview}
+              onToggle={toggleTransitoPreview}
+              onMarcarTodos={marcarTodosTransito}
+              onAplicar={aplicarTransitoSeleccionados}
+              aplicarLabel="Aplicar seleccionados a Tránsito"
+              colActualLabel="Tránsito actual"
+            />
           </Accordion>
 
           <Accordion title="3. Proveedores — agregar, eliminar y asignar días" isOpen={sectionOpen.proveedores} onToggle={() => toggleSection("proveedores")}>
@@ -1412,7 +1524,12 @@ export default function PedidosPrototype() {
                     <span style={{ fontSize: 12, fontWeight: 500 }}>
                       Semana del {snap.fecha} &middot; {pedidos.length} productos pedidos &middot; {seleccionados} seleccionados
                     </span>
-                    <button onClick={() => aplicarComoTransito(snap.id)} style={buttonStyle}>Concatenar seleccionados como tránsito</button>
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <button onClick={() => aplicarComoTransito(snap.id)} style={buttonStyle}>Concatenar seleccionados como tránsito</button>
+                      <button onClick={() => eliminarSemana(snap.id, snap.fecha)} style={dangerLinkStyle} title="Eliminar esta semana del historial">
+                        <Trash2 size={13} /> Eliminar
+                      </button>
+                    </div>
                   </div>
                   {pedidos.length > 0 && (
                     <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 4 }}>
