@@ -42,6 +42,11 @@ export async function updateSnapshot(snapshotId, items) {
   return fetchHistorial();
 }
 
+export async function deleteSnapshot(snapshotId) {
+  await set(ref(db, `historial/${snapshotId}`), null);
+  return fetchHistorial();
+}
+
 // Nodo "estado/actual": guarda el estado editable completo de la app
 // (productos, proveedores, configuración de días/calendario) para que
 // no se pierda al cerrar o recargar la página, ni cambiar de dispositivo.
