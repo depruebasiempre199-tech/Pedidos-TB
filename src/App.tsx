@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, Fragment } from "react";
 import * as XLSX from "xlsx";
 import {
   ChevronDown,
@@ -23,7 +23,7 @@ import {
   Moon,
   Monitor,
 } from "lucide-react";
-import { fetchHistorial, saveSnapshot, updateSnapshot } from "./firebase-service";
+import { fetchHistorial, saveSnapshot, updateSnapshot, fetchEstado, saveEstado } from "./firebase-service";
 
 const WEEKDAYS = ["Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"];
 const DIAS_PEDIDO = [...WEEKDAYS];
@@ -67,6 +67,13 @@ function defaultDiaProveedores() {
 
 function normalize(s) {
   return (s || "").toString().trim().toLowerCase();
+}
+
+function parseNumeroExcel(v) {
+  if (typeof v === "number") return v;
+  if (v === null || v === undefined) return NaN;
+  const limpio = v.toString().trim().replace(/,/g, "");
+  return Number(limpio);
 }
 
 function itemKey(producto, proveedor, dia) {
@@ -446,6 +453,8 @@ let nextId = 100;
 
 export default function PedidosPrototype() {
   const [rows, setRows] = useState(RAW);
+  const [extraKeys, setExtraKeys] = useState([]);
+  const [nuevaCombo, setNuevaCombo] = useState({ proveedor: "", dia: DIAS_PEDIDO[0] });
   const [dia, setDia] = useState("Todos");
   const [tipo, setTipo] = useState("Todos");
   const [proveedor, setProveedor] = useState("Todos");
@@ -462,13 +471,15 @@ export default function PedidosPrototype() {
   }, []);
 
   const isDark = themeMode === "dark" || (themeMode === "system" && systemDark);
-  const [sectionOpen, setSectionOpen] = useState({ uploads: true, proveedores: false, diasInv: false, calendario: false, consistencia: false });
+  const [sectionOpen, setSectionOpen] = useState({ uploads: true, transito: false, proveedores: false, diasInv: false, calendario: false, consistencia: false });
   const [diasInvConfig, setDiasInvConfig] = useState({});
   const [schedule, setSchedule] = useState(DEFAULT_SCHEDULE);
   const [fechaPedido, setFechaPedido] = useState(new Date().toISOString().slice(0, 10));
   const [uploadStatus, setUploadStatus] = useState("");
   const [existenciaDia, setExistenciaDia] = useState("Jueves");
   const [existenciaUltima, setExistenciaUltima] = useState(() => Object.fromEntries(DIAS_PEDIDO.map((d) => [d, null])));
+  const [transitoPreview, setTransitoPreview] = useState([]);
+  const [transitoArchivo, setTransitoArchivo] = useState("");
   const [consumoUltima, setConsumoUltima] = useState(null);
   const [diaProveedores, setDiaProveedores] = useState(defaultDiaProveedores);
   const [proveedoresList, setProveedoresList] = useState(PROVEEDORES_INICIALES);
@@ -480,6 +491,8 @@ export default function PedidosPrototype() {
   const [resumenDia, setResumenDia] = useState("Todos");
   const [resumenMostrarTodos, setResumenMostrarTodos] = useState(false);
   const [columnasCompactas, setColumnasCompactas] = useState(true);
+  const [estadoListo, setEstadoListo] = useState(false);
+  const [guardadoStatus, setGuardadoStatus] = useState("");
 
   useEffect(() => {
     fetchHistorial()
@@ -493,13 +506,70 @@ export default function PedidosPrototype() {
       });
   }, []);
 
+  // Cargar el estado guardado (productos, proveedores, configuración) al abrir la app.
+  useEffect(() => {
+    fetchEstado()
+      .then((estado) => {
+        if (estado) {
+          if (estado.rows) setRows(estado.rows);
+          if (estado.extraKeys) setExtraKeys(estado.extraKeys);
+          if (estado.diasInvConfig) setDiasInvConfig(estado.diasInvConfig);
+          if (estado.schedule) setSchedule(estado.schedule);
+          if (estado.proveedoresList) setProveedoresList(estado.proveedoresList);
+          if (estado.diaProveedores) {
+            const reconstruido = {};
+            DIAS_PEDIDO.forEach((d) => {
+              reconstruido[d] = new Set(estado.diaProveedores[d] || []);
+            });
+            setDiaProveedores(reconstruido);
+          }
+          if (estado.fechaPedido) setFechaPedido(estado.fechaPedido);
+          const maxId = Math.max(0, ...(estado.rows || []).map((r) => r.id));
+          if (maxId >= nextId) nextId = maxId + 1;
+        }
+        setEstadoListo(true);
+      })
+      .catch((err) => {
+        console.error(err);
+        setEstadoListo(true);
+      });
+  }, []);
+
+  // Autoguardado: cada vez que cambian productos, proveedores o configuración,
+  // se guarda en Firebase (con una pequeña espera para no guardar en cada tecla).
+  useEffect(() => {
+    if (!estadoListo) return;
+    setGuardadoStatus("guardando…");
+    const timeout = setTimeout(() => {
+      const estado = {
+        rows,
+        extraKeys,
+        diasInvConfig,
+        schedule,
+        proveedoresList,
+        diaProveedores: Object.fromEntries(Object.entries(diaProveedores).map(([k, v]) => [k, [...v]])),
+        fechaPedido,
+      };
+      saveEstado(estado)
+        .then(() => setGuardadoStatus("guardado ✓"))
+        .catch((err) => {
+          console.error(err);
+          setGuardadoStatus("no se pudo guardar — revisá tu conexión");
+        });
+    }, 1200);
+    return () => clearTimeout(timeout);
+  }, [estadoListo, rows, extraKeys, diasInvConfig, schedule, proveedoresList, diaProveedores, fechaPedido]);
+
   const toggleSection = (key) => setSectionOpen((prev) => ({ ...prev, [key]: !prev[key] }));
 
   const todosProveedores = useMemo(() => proveedoresList.map((p) => p.nombre), [proveedoresList]);
   const proveedoresFiltro = useMemo(() => ["Todos", ...todosProveedores], [todosProveedores]);
   const diaOptions = ["Todos", ...DIAS_PEDIDO];
   const tipoOptions = ["Todos", "externo", "interno"];
-  const proveedorDiaKeys = useMemo(() => [...new Set(rows.map((r) => `${r.proveedor}|${r.dia}`))], [rows]);
+  const proveedorDiaKeys = useMemo(
+    () => [...new Set([...rows.map((r) => `${r.proveedor}|${r.dia}`), ...extraKeys])],
+    [rows, extraKeys]
+  );
 
   const update = (id, field, value) => {
     setRows((prev) =>
@@ -513,6 +583,26 @@ export default function PedidosPrototype() {
 
   const updateText = (id, field, value) => {
     setRows((prev) => prev.map((r) => (r.id === id ? { ...r, [field]: value } : r)));
+  };
+
+  const agregarCombo = () => {
+    if (!nuevaCombo.proveedor) return;
+    const key = `${nuevaCombo.proveedor}|${nuevaCombo.dia}`;
+    setExtraKeys((prev) => (prev.includes(key) ? prev : [...prev, key]));
+  };
+
+  const eliminarCombo = (key) => {
+    setExtraKeys((prev) => prev.filter((k) => k !== key));
+    setDiasInvConfig((prev) => {
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+    setSchedule((prev) => {
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
   };
 
   const updateDiasInv = (key, value) => {
@@ -616,12 +706,21 @@ export default function PedidosPrototype() {
       const updates = {};
       data.forEach((row) => {
         const nombre = normalize(row[0]);
-        const valor = Number(row[27]);
+        const valor = parseNumeroExcel(row[29]);
         if (nombre && !isNaN(valor)) updates[nombre] = valor;
       });
-      setRows((prev) => prev.map((r) => (updates[normalize(r.producto)] !== undefined ? { ...r, consumoSemanal: updates[normalize(r.producto)] } : r)));
-      setUploadStatus(`Consumo semanal actualizado (${Object.keys(updates).length} productos leídos).`);
-      setConsumoUltima({ fecha: new Date(), archivo: file.name, count: Object.keys(updates).length });
+      let count = 0;
+      setRows((prev) =>
+        prev.map((r) => {
+          if (updates[normalize(r.producto)] !== undefined) {
+            count++;
+            return { ...r, consumoSemanal: updates[normalize(r.producto)] };
+          }
+          return r;
+        })
+      );
+      setUploadStatus(`Consumo semanal actualizado (${count} productos coincidieron).`);
+      setConsumoUltima({ fecha: new Date(), archivo: file.name, count });
     } catch (err) {
       setUploadStatus("No se pudo leer el archivo de consumo semanal.");
     }
@@ -636,7 +735,7 @@ export default function PedidosPrototype() {
       const updates = {};
       data.forEach((row) => {
         const nombre = normalize(row[0]);
-        const valor = Number(row[16]);
+        const valor = parseNumeroExcel(row[16]);
         if (nombre && !isNaN(valor)) updates[nombre] = valor;
       });
       let count = 0;
@@ -654,6 +753,61 @@ export default function PedidosPrototype() {
     } catch (err) {
       setUploadStatus("No se pudo leer el archivo de existencia.");
     }
+  };
+
+  const handleTransitoUpload = async (file) => {
+    if (!file) return;
+    try {
+      const wb = await readWorkbook(file);
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const data = XLSX.utils.sheet_to_json(ws, { header: 1 });
+      const updates = {};
+      data.forEach((row) => {
+        const nombre = normalize(row[0]);
+        const valor = parseNumeroExcel(row[16]);
+        if (nombre && !isNaN(valor)) updates[nombre] = valor;
+      });
+      const preview = rows
+        .filter((r) => updates[normalize(r.producto)] !== undefined)
+        .map((r) => ({
+          id: r.id,
+          producto: r.producto,
+          proveedor: r.proveedor,
+          dia: r.dia,
+          actual: r.transito,
+          nuevo: updates[normalize(r.producto)],
+          aplicar: false,
+        }));
+      setTransitoPreview(preview);
+      setTransitoArchivo(file.name);
+      setUploadStatus(
+        preview.length > 0
+          ? `Se encontraron ${preview.length} coincidencias. Revisá la lista abajo y elegí cuáles aplicar como tránsito.`
+          : "No se encontraron productos coincidentes en el archivo."
+      );
+    } catch (err) {
+      setUploadStatus("No se pudo leer el archivo de tránsito.");
+    }
+  };
+
+  const toggleTransitoPreview = (id) => {
+    setTransitoPreview((prev) => prev.map((p) => (p.id === id ? { ...p, aplicar: !p.aplicar } : p)));
+  };
+
+  const marcarTodosTransito = (valor) => {
+    setTransitoPreview((prev) => prev.map((p) => ({ ...p, aplicar: valor })));
+  };
+
+  const aplicarTransitoSeleccionados = () => {
+    const seleccionados = transitoPreview.filter((p) => p.aplicar);
+    if (seleccionados.length === 0) return;
+    const map = {};
+    seleccionados.forEach((p) => {
+      map[p.id] = p.nuevo;
+    });
+    setRows((prev) => prev.map((r) => (map[r.id] !== undefined ? { ...r, transito: map[r.id] } : r)));
+    setUploadStatus(`Tránsito actualizado en ${seleccionados.length} producto(s).`);
+    setTransitoPreview((prev) => prev.filter((p) => !p.aplicar));
   };
 
   const computed = rows.map((r) => computeRow(r, diasInvConfig));
@@ -732,6 +886,16 @@ export default function PedidosPrototype() {
     if (proveedor !== "Todos" && r.proveedor !== proveedor) return false;
     return true;
   });
+  const provOrderIndex = useMemo(() => {
+    const map = {};
+    proveedoresList.forEach((p, idx) => { map[p.nombre] = idx; });
+    return map;
+  }, [proveedoresList]);
+  const filteredGrouped = useMemo(
+    () => [...filtered].sort((a, b) => (provOrderIndex[a.proveedor] ?? 999) - (provOrderIndex[b.proveedor] ?? 999)),
+    [filtered, provOrderIndex]
+  );
+  const colCount = columnasCompactas ? 7 : 14;
   const totalPedir = filtered.reduce((s, r) => s + (r.pedir > 0 ? 1 : 0), 0);
 
   const uploadChecklist = [
@@ -772,6 +936,23 @@ export default function PedidosPrototype() {
     URL.revokeObjectURL(url);
   };
 
+  const descargarExcel = () => {
+    const lista = resumenMostrarTodos ? resumenTodos : resumenItems;
+    const data = lista.map((i) => ({
+      Producto: i.producto,
+      Proveedor: i.proveedor,
+      "Día de pedido": i.dia,
+      "Fecha de entrega": i.fecha,
+      Cantidad: i.cantidad,
+      Unidad: i.unidad,
+    }));
+    const ws = XLSX.utils.json_to_sheet(data);
+    ws["!cols"] = [{ wch: 28 }, { wch: 20 }, { wch: 14 }, { wch: 16 }, { wch: 10 }, { wch: 14 }];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Pedido");
+    XLSX.writeFile(wb, `pedido_${resumenDia}_${fechaPedido}.xlsx`);
+  };
+
   const vars = isDark ? DARK_VARS : LIGHT_VARS;
 
   if (vistaResumen) {
@@ -797,6 +978,7 @@ export default function PedidosPrototype() {
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <button onClick={() => setVistaResumen(false)} style={buttonStyle}><ArrowLeft size={13} /> Volver a la tabla</button>
             <button onClick={descargarCSV} style={buttonStyle}><Download size={13} /> Descargar CSV</button>
+            <button onClick={descargarExcel} style={buttonStyle}><Download size={13} /> Descargar Excel</button>
             <button onClick={() => window.print()} style={{ ...buttonStyle, background: "var(--header-bg)", color: "var(--header-text)", borderColor: "var(--header-bg)" }}><Printer size={13} /> Imprimir</button>
           </div>
         </div>
@@ -868,7 +1050,19 @@ export default function PedidosPrototype() {
       <StyleBlock />
       <div style={{ marginBottom: 16, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
         <Logo />
-        <ThemeToggle themeMode={themeMode} setThemeMode={setThemeMode} />
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          {estadoListo && (
+            <span
+              style={{
+                fontSize: 11,
+                color: guardadoStatus === "no se pudo guardar — revisá tu conexión" ? "var(--danger, #d33)" : "var(--text-secondary)",
+              }}
+            >
+              {guardadoStatus === "guardando…" ? "guardando…" : guardadoStatus === "guardado ✓" ? "✓ guardado" : guardadoStatus}
+            </span>
+          )}
+          <ThemeToggle themeMode={themeMode} setThemeMode={setThemeMode} />
+        </div>
       </div>
 
       <div className="pp-tabs" style={{ borderBottom: "1px solid var(--border)", marginBottom: 18 }}>
@@ -976,7 +1170,59 @@ export default function PedidosPrototype() {
             </div>
           </Accordion>
 
-          <Accordion title="2. Proveedores — agregar, eliminar y asignar días" isOpen={sectionOpen.proveedores} onToggle={() => toggleSection("proveedores")}>
+          <Accordion title="2. Cargar tránsito desde Excel (Inventario Final, selección manual)" isOpen={sectionOpen.transito} onToggle={() => toggleSection("transito")}>
+            <div style={{ fontSize: 12, color: "var(--text-secondary)", marginBottom: 10 }}>
+              Subí el reporte (columna A = nombre del producto, columna Q = Inventario Final). La app va a mostrar
+              una lista de coincidencias para que elijas producto por producto cuáles aplicar como Tránsito — no se
+              aplica nada automáticamente.
+            </div>
+            <input type="file" accept=".xlsx,.xls" onChange={(e) => handleTransitoUpload(e.target.files[0])} style={fileInputStyle} />
+            {uploadStatus && transitoArchivo && <div style={{ fontSize: 12, color: "var(--ok)", marginTop: 8 }}>{uploadStatus}</div>}
+            {transitoPreview.length > 0 && (
+              <div style={{ marginTop: 14 }}>
+                <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 10, flexWrap: "wrap" }}>
+                  <button onClick={() => marcarTodosTransito(true)} style={miniButtonStyle}>Marcar todos</button>
+                  <button onClick={() => marcarTodosTransito(false)} style={miniButtonStyle}>Desmarcar todos</button>
+                  <button onClick={aplicarTransitoSeleccionados} style={{ ...buttonStyle, background: "var(--ok)", color: "#fff", borderColor: "var(--ok)" }}>
+                    Aplicar seleccionados a Tránsito
+                  </button>
+                  <span style={{ fontSize: 11.5, color: "var(--text-secondary)" }}>
+                    {transitoPreview.filter((p) => p.aplicar).length} de {transitoPreview.length} seleccionados
+                  </span>
+                </div>
+                <div style={{ maxHeight: 360, overflowY: "auto", border: "1px solid var(--border)", borderRadius: 8 }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+                    <thead>
+                      <tr style={{ background: "var(--track)", textAlign: "left" }}>
+                        <th style={{ padding: "6px 8px", width: 30 }}></th>
+                        <th style={{ padding: "6px 8px" }}>Producto</th>
+                        <th style={{ padding: "6px 8px" }}>Proveedor</th>
+                        <th style={{ padding: "6px 8px" }}>Día</th>
+                        <th style={{ padding: "6px 8px", textAlign: "right" }}>Tránsito actual</th>
+                        <th style={{ padding: "6px 8px", textAlign: "right" }}>Valor nuevo</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {transitoPreview.map((p) => (
+                        <tr key={p.id} style={{ borderTop: "1px solid var(--border)", background: p.aplicar ? "var(--track)" : "transparent" }}>
+                          <td style={{ padding: "6px 8px" }}>
+                            <input type="checkbox" checked={p.aplicar} onChange={() => toggleTransitoPreview(p.id)} />
+                          </td>
+                          <td style={{ padding: "6px 8px" }}>{p.producto}</td>
+                          <td style={{ padding: "6px 8px", color: "var(--text-secondary)" }}>{p.proveedor}</td>
+                          <td style={{ padding: "6px 8px", color: "var(--text-secondary)" }}>{p.dia}</td>
+                          <td style={{ padding: "6px 8px", textAlign: "right", fontFamily: "var(--mono)" }}>{p.actual}</td>
+                          <td style={{ padding: "6px 8px", textAlign: "right", fontFamily: "var(--mono)", fontWeight: 600 }}>{p.nuevo}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </Accordion>
+
+          <Accordion title="3. Proveedores — agregar, eliminar y asignar días" isOpen={sectionOpen.proveedores} onToggle={() => toggleSection("proveedores")}>
             <div style={{ display: "flex", gap: 8, marginBottom: 10, flexWrap: "wrap", alignItems: "center" }}>
               <input
                 type="text"
@@ -1052,7 +1298,21 @@ export default function PedidosPrototype() {
             </div>
           </Accordion>
 
-          <Accordion title="3. Días de inventario objetivo por proveedor y día de pedido" isOpen={sectionOpen.diasInv} onToggle={() => toggleSection("diasInv")}>
+          <Accordion title="4. Días de inventario objetivo por proveedor y día de pedido" isOpen={sectionOpen.diasInv} onToggle={() => toggleSection("diasInv")}>
+            <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 12, flexWrap: "wrap" }}>
+              <select value={nuevaCombo.proveedor} onChange={(e) => setNuevaCombo((c) => ({ ...c, proveedor: e.target.value }))} style={selectStyle}>
+                <option value="">Elegir proveedor…</option>
+                {todosProveedores.map((p) => (
+                  <option key={p} value={p}>{p}</option>
+                ))}
+              </select>
+              <select value={nuevaCombo.dia} onChange={(e) => setNuevaCombo((c) => ({ ...c, dia: e.target.value }))} style={selectStyle}>
+                {DIAS_PEDIDO.map((d) => (
+                  <option key={d} value={d}>{d}</option>
+                ))}
+              </select>
+              <button onClick={agregarCombo} style={buttonStyle}><Plus size={13} /> Agregar combinación</button>
+            </div>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
               {proveedorDiaKeys.map((key) => {
                 const [prov, d] = key.split("|");
@@ -1068,19 +1328,34 @@ export default function PedidosPrototype() {
                       style={{ width: 48, fontFamily: "var(--mono)", fontSize: 12, border: "1px solid var(--border)", borderRadius: 6, padding: "2px 4px" }}
                     />
                     <span style={{ fontSize: 11, color: "var(--text-secondary)" }}>días</span>
+                    <button onClick={() => eliminarCombo(key)} title="Quitar combinación" style={{ ...miniButtonStyle, padding: "2px 5px" }}><Trash2 size={11} /></button>
                   </div>
                 );
               })}
             </div>
           </Accordion>
 
-          <Accordion title="4. Calendario de despacho por proveedor y día de pedido" isOpen={sectionOpen.calendario} onToggle={() => toggleSection("calendario")}>
+          <Accordion title="5. Calendario de despacho por proveedor y día de pedido" isOpen={sectionOpen.calendario} onToggle={() => toggleSection("calendario")}>
             <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 10 }}>
               <span style={{ fontSize: 12 }}>Fecha del pedido</span>
               <input type="date" value={fechaPedido} onChange={(e) => setFechaPedido(e.target.value)} style={selectStyle} />
             </div>
             <div style={{ fontSize: 11, color: "var(--text-secondary)", marginBottom: 8 }}>
               Cada combinación de proveedor + día de pedido tiene su propio día de entrega (por ejemplo, Ristreto puede entregar Jueves lo pedido el Domingo, y Martes lo pedido el Martes).
+            </div>
+            <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 12, flexWrap: "wrap" }}>
+              <select value={nuevaCombo.proveedor} onChange={(e) => setNuevaCombo((c) => ({ ...c, proveedor: e.target.value }))} style={selectStyle}>
+                <option value="">Elegir proveedor…</option>
+                {todosProveedores.map((p) => (
+                  <option key={p} value={p}>{p}</option>
+                ))}
+              </select>
+              <select value={nuevaCombo.dia} onChange={(e) => setNuevaCombo((c) => ({ ...c, dia: e.target.value }))} style={selectStyle}>
+                {DIAS_PEDIDO.map((d) => (
+                  <option key={d} value={d}>{d}</option>
+                ))}
+              </select>
+              <button onClick={agregarCombo} style={buttonStyle}><Plus size={13} /> Agregar combinación</button>
             </div>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
               {proveedorDiaKeys.map((key) => {
@@ -1093,13 +1368,14 @@ export default function PedidosPrototype() {
                         <option key={w} value={w}>{w}</option>
                       ))}
                     </select>
+                    <button onClick={() => eliminarCombo(key)} title="Quitar combinación" style={{ ...miniButtonStyle, padding: "2px 5px" }}><Trash2 size={11} /></button>
                   </div>
                 );
               })}
             </div>
           </Accordion>
 
-          <Accordion title="5. Consistencia de unidades" isOpen={sectionOpen.consistencia} onToggle={() => toggleSection("consistencia")}>
+          <Accordion title="6. Consistencia de unidades" isOpen={sectionOpen.consistencia} onToggle={() => toggleSection("consistencia")}>
             {inconsistencias.length === 0 ? (
               <div style={{ fontSize: 12, color: "var(--ok)" }}>Todos los productos usan la misma unidad base en todas sus filas.</div>
             ) : (
@@ -1216,10 +1492,19 @@ export default function PedidosPrototype() {
               </tr>
             </thead>
             <tbody>
-              {filtered.map((r) => {
+              {filteredGrouped.map((r, idx) => {
                 const despachoDate = nextDateForWeekday(fechaPedido, schedule[`${r.proveedor}|${r.dia}`] || "Lunes");
+                const esNuevoGrupo = idx === 0 || filteredGrouped[idx - 1].proveedor !== r.proveedor;
                 return (
-                  <tr key={r.id} style={{ borderTop: "1px solid var(--border)", borderLeft: `3px solid ${r.tipo === "externo" ? "var(--accent-ext)" : "var(--accent-int)"}` }}>
+                  <Fragment key={r.id}>
+                    {esNuevoGrupo && (
+                      <tr>
+                        <td colSpan={colCount} style={{ padding: "8px 12px", background: "var(--track)", fontSize: 11.5, fontWeight: 600, color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: 0.4 }}>
+                          {r.proveedor}
+                        </td>
+                      </tr>
+                    )}
+                    <tr style={{ borderTop: "1px solid var(--border)", borderLeft: `3px solid ${r.tipo === "externo" ? "var(--accent-ext)" : "var(--accent-int)"}` }}>
                     <td style={{ padding: "6px 12px", minWidth: 180 }}>
                       <input type="text" value={r.producto} onChange={(e) => updateText(r.id, "producto", e.target.value)} style={textInputStyle} />
                     </td>
@@ -1306,6 +1591,7 @@ export default function PedidosPrototype() {
                       <button onClick={() => eliminarFila(r.id)} style={dangerLinkStyle}><Trash2 size={12} /></button>
                     </td>
                   </tr>
+                  </Fragment>
                 );
               })}
             </tbody>
@@ -1314,17 +1600,26 @@ export default function PedidosPrototype() {
       </div>
 
       <div className="pp-cards">
-        {filtered.map((r) => (
-          <ProductCard
-            key={r.id}
-            r={r}
-            despachoLabel={formatDate(nextDateForWeekday(fechaPedido, schedule[`${r.proveedor}|${r.dia}`] || "Lunes"))}
-            updateText={updateText}
-            update={update}
-            updateUnidadBase={updateUnidadBase}
-            eliminarFila={eliminarFila}
-          />
-        ))}
+        {filteredGrouped.map((r, idx) => {
+          const esNuevoGrupo = idx === 0 || filteredGrouped[idx - 1].proveedor !== r.proveedor;
+          return (
+            <Fragment key={r.id}>
+              {esNuevoGrupo && (
+                <div style={{ fontSize: 11.5, fontWeight: 600, color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: 0.4, padding: "6px 4px 2px" }}>
+                  {r.proveedor}
+                </div>
+              )}
+              <ProductCard
+                r={r}
+                despachoLabel={formatDate(nextDateForWeekday(fechaPedido, schedule[`${r.proveedor}|${r.dia}`] || "Lunes"))}
+                updateText={updateText}
+                update={update}
+                updateUnidadBase={updateUnidadBase}
+                eliminarFila={eliminarFila}
+              />
+            </Fragment>
+          );
+        })}
       </div>
 
       <div style={{ marginTop: 10, fontSize: 12, color: "var(--text-secondary)" }}>
