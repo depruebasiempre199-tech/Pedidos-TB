@@ -22,6 +22,7 @@ import {
   Sun,
   Moon,
   Monitor,
+  Columns3,
 } from "lucide-react";
 import { fetchHistorial, saveSnapshot, updateSnapshot, deleteSnapshot, fetchEstado, saveEstado } from "./firebase-service";
 
@@ -540,7 +541,28 @@ export default function PedidosPrototype() {
   const [vistaResumen, setVistaResumen] = useState(false);
   const [resumenDia, setResumenDia] = useState("Todos");
   const [resumenMostrarTodos, setResumenMostrarTodos] = useState(false);
-  const [columnasCompactas, setColumnasCompactas] = useState(true);
+  const COLUMNAS_OPCIONALES = [
+    { key: "proveedor", label: "Proveedor" },
+    { key: "tipo", label: "Tipo" },
+    { key: "unidadCompra", label: "Unidad compra" },
+    { key: "unidadBase", label: "U. base" },
+    { key: "consumoDia", label: "Consumo/día" },
+    { key: "diasObj", label: "Días obj." },
+    { key: "proyeccion", label: "Proyección" },
+    { key: "fechaDespacho", label: "Fecha despacho" },
+  ];
+  const [columnasVisibles, setColumnasVisibles] = useState({
+    proveedor: false,
+    tipo: false,
+    unidadCompra: false,
+    unidadBase: false,
+    consumoDia: false,
+    diasObj: false,
+    proyeccion: false,
+    fechaDespacho: false,
+  });
+  const [columnMenuOpen, setColumnMenuOpen] = useState(false);
+  const toggleColumna = (key) => setColumnasVisibles((prev) => ({ ...prev, [key]: !prev[key] }));
   const [estadoListo, setEstadoListo] = useState(false);
   const [guardadoStatus, setGuardadoStatus] = useState("");
 
@@ -1013,7 +1035,7 @@ export default function PedidosPrototype() {
     () => [...filtered].sort((a, b) => (provOrderIndex[a.proveedor] ?? 999) - (provOrderIndex[b.proveedor] ?? 999)),
     [filtered, provOrderIndex]
   );
-  const colCount = columnasCompactas ? 7 : 14;
+  const colCount = 5 + Object.values(columnasVisibles).filter(Boolean).length; // Producto + Cobertura + Existencia + Tránsito + Pedir(+eliminar) + opcionales activas
   const totalPedir = filtered.reduce((s, r) => s + (r.pedir > 0 ? 1 : 0), 0);
 
   const uploadChecklist = [
@@ -1588,9 +1610,42 @@ export default function PedidosPrototype() {
         >
           <Printer size={13} /> Ver resumen para descargar / imprimir
         </button>
-        <button onClick={() => setColumnasCompactas((v) => !v)} style={buttonStyle}>
-          {columnasCompactas ? "Ver todas las columnas" : "Vista compacta"}
-        </button>
+        <div style={{ position: "relative" }}>
+          <button onClick={() => setColumnMenuOpen((v) => !v)} style={buttonStyle}>
+            <Columns3 size={13} /> Columnas
+          </button>
+          {columnMenuOpen && (
+            <div
+              style={{
+                position: "absolute",
+                right: 0,
+                top: "calc(100% + 6px)",
+                background: "var(--card)",
+                border: "1px solid var(--border)",
+                borderRadius: 10,
+                boxShadow: "var(--shadow)",
+                padding: 12,
+                zIndex: 20,
+                minWidth: 190,
+              }}
+            >
+              <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text-secondary)", marginBottom: 8, textTransform: "uppercase", letterSpacing: 0.4 }}>
+                Mostrar columnas
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                {COLUMNAS_OPCIONALES.map((c) => (
+                  <label key={c.key} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, cursor: "pointer" }}>
+                    <input type="checkbox" checked={columnasVisibles[c.key]} onChange={() => toggleColumna(c.key)} />
+                    {c.label}
+                  </label>
+                ))}
+              </div>
+              <div style={{ fontSize: 10.5, color: "var(--text-secondary)", marginTop: 10, borderTop: "1px solid var(--border)", paddingTop: 8 }}>
+                Producto, Cobertura, Existencia, Tránsito y Pedir siempre se ven.
+              </div>
+            </div>
+          )}
+        </div>
       </div>
 
       <div className="pp-table-wrap" style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: 12, overflow: "hidden", boxShadow: "var(--shadow)" }}>
@@ -1598,116 +1653,130 @@ export default function PedidosPrototype() {
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
             <thead>
               <tr style={{ background: "var(--header-bg)", textAlign: "left" }}>
-                {(columnasCompactas
-                  ? ["Producto", "Proveedor", "Cobertura", "Existencia", "Tránsito", "Pedir", ""]
-                  : ["Producto", "Proveedor", "Tipo", "Unidad compra", "U. base", "Consumo/día", "Días obj.", "Cobertura", "Existencia", "Tránsito", "Proyección", "Pedir", "Fecha despacho", ""]
-                ).map((h) => (
-                  <th key={h} style={{ padding: "11px 12px", fontWeight: 500, color: "var(--header-text)", whiteSpace: "nowrap", fontSize: 10.5, textTransform: "uppercase", letterSpacing: 0.5 }}>
-                    {h}
-                  </th>
-                ))}
+                <th style={{ ...stickyLeftHeaderStyle, padding: "11px 12px", fontWeight: 500, color: "var(--header-text)", whiteSpace: "nowrap", fontSize: 10.5, textTransform: "uppercase", letterSpacing: 0.5 }}>
+                  Producto
+                </th>
+                {columnasVisibles.proveedor && <th style={thHeadStyle}>Proveedor</th>}
+                {columnasVisibles.tipo && <th style={thHeadStyle}>Tipo</th>}
+                {columnasVisibles.unidadCompra && <th style={thHeadStyle}>Unidad compra</th>}
+                {columnasVisibles.unidadBase && <th style={thHeadStyle}>U. base</th>}
+                {columnasVisibles.consumoDia && <th style={thHeadStyle}>Consumo/día</th>}
+                {columnasVisibles.diasObj && <th style={thHeadStyle}>Días obj.</th>}
+                <th style={thHeadStyle}>Cobertura</th>
+                <th style={thHeadStyle}>Existencia</th>
+                <th style={thHeadStyle}>Tránsito</th>
+                {columnasVisibles.proyeccion && <th style={thHeadStyle}>Proyección</th>}
+                {columnasVisibles.fechaDespacho && <th style={thHeadStyle}>Fecha despacho</th>}
+                <th style={{ ...stickyRightHeaderStyle, padding: "11px 12px", fontWeight: 500, color: "var(--header-text)", whiteSpace: "nowrap", fontSize: 10.5, textTransform: "uppercase", letterSpacing: 0.5 }}>
+                  Pedir
+                </th>
               </tr>
             </thead>
             <tbody>
               {filteredGrouped.map((r, idx) => {
                 const despachoDate = nextDateForWeekday(fechaPedido, schedule[`${r.proveedor}|${r.dia}`] || "Lunes");
                 const esNuevoGrupo = idx === 0 || filteredGrouped[idx - 1].proveedor !== r.proveedor;
+                const accentColor = r.tipo === "externo" ? "var(--accent-ext)" : "var(--accent-int)";
                 return (
                   <Fragment key={r.id}>
                     {esNuevoGrupo && (
                       <tr>
-                        <td colSpan={colCount} style={{ padding: "8px 12px", background: "var(--track)", fontSize: 11.5, fontWeight: 600, color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: 0.4 }}>
-                          {r.proveedor}
+                        <td colSpan={colCount} style={{ padding: 0, background: "var(--track)" }}>
+                          <div style={{ position: "sticky", left: 0, width: "fit-content", padding: "8px 12px", fontSize: 11.5, fontWeight: 600, color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: 0.4, whiteSpace: "nowrap" }}>
+                            {r.proveedor}
+                          </div>
                         </td>
                       </tr>
                     )}
-                    <tr style={{ borderTop: "1px solid var(--border)", borderLeft: `3px solid ${r.tipo === "externo" ? "var(--accent-ext)" : "var(--accent-int)"}` }}>
-                    <td style={{ padding: "6px 12px", minWidth: 180 }}>
-                      <input type="text" value={r.producto} onChange={(e) => updateText(r.id, "producto", e.target.value)} style={textInputStyle} />
-                    </td>
-                    <td style={{ padding: "10px 12px", color: "var(--text-secondary)" }}>{r.proveedor}</td>
-                    {!columnasCompactas && (
+                    <tr style={{ borderTop: "1px solid var(--border)" }}>
+                      <td style={{ ...stickyLeftStyle, padding: "6px 12px", minWidth: 180, borderLeft: `3px solid ${accentColor}` }}>
+                        <input type="text" value={r.producto} onChange={(e) => updateText(r.id, "producto", e.target.value)} style={textInputStyle} />
+                      </td>
+                      {columnasVisibles.proveedor && <td style={{ padding: "10px 12px", color: "var(--text-secondary)" }}>{r.proveedor}</td>}
+                      {columnasVisibles.tipo && (
+                        <td style={{ padding: "10px 12px" }}>
+                          <span
+                            style={{
+                              fontSize: 10.5,
+                              fontWeight: 500,
+                              padding: "2px 8px",
+                              borderRadius: 20,
+                              background: r.tipo === "externo" ? "#F0E6DC" : "#F5EBC8",
+                              color: accentColor,
+                            }}
+                          >
+                            {r.tipo}
+                          </span>
+                        </td>
+                      )}
+                      {columnasVisibles.unidadCompra && (
+                        <td style={{ padding: "6px 12px", minWidth: 120 }}>
+                          <input type="text" value={r.unidad} onChange={(e) => updateText(r.id, "unidad", e.target.value)} style={textInputStyle} />
+                        </td>
+                      )}
+                      {columnasVisibles.unidadBase && (
+                        <td style={{ padding: "6px 12px" }}>
+                          <select value={r.unidadBase} onChange={(e) => updateUnidadBase(r.id, e.target.value)} style={{ ...selectStyle, padding: "4px 6px", fontSize: 12 }}>
+                            {UNIDADES_BASE.map((u) => (
+                              <option key={u} value={u}>{u}</option>
+                            ))}
+                          </select>
+                        </td>
+                      )}
+                      {columnasVisibles.consumoDia && <td style={{ padding: "10px 12px", fontFamily: "var(--mono)" }}>{r.diario.toFixed(2)}</td>}
+                      {columnasVisibles.diasObj && <td style={{ padding: "10px 12px", fontFamily: "var(--mono)" }}>{r.diasInv}</td>}
                       <td style={{ padding: "10px 12px" }}>
-                        <span
-                          style={{
-                            fontSize: 10.5,
-                            fontWeight: 500,
-                            padding: "2px 8px",
-                            borderRadius: 20,
-                            background: r.tipo === "externo" ? "#F0E6DC" : "#F5EBC8",
-                            color: r.tipo === "externo" ? "var(--accent-ext)" : "var(--accent-int)",
-                          }}
-                        >
-                          {r.tipo}
-                        </span>
+                        <Bar cobertura={r.cobertura} objetivo={r.diasInv} />
                       </td>
-                    )}
-                    {!columnasCompactas && (
-                      <td style={{ padding: "6px 12px", minWidth: 120 }}>
-                        <input type="text" value={r.unidad} onChange={(e) => updateText(r.id, "unidad", e.target.value)} style={textInputStyle} />
-                      </td>
-                    )}
-                    {!columnasCompactas && (
-                      <td style={{ padding: "6px 12px" }}>
-                        <select value={r.unidadBase} onChange={(e) => updateUnidadBase(r.id, e.target.value)} style={{ ...selectStyle, padding: "4px 6px", fontSize: 12 }}>
-                          {UNIDADES_BASE.map((u) => (
-                            <option key={u} value={u}>{u}</option>
-                          ))}
-                        </select>
-                      </td>
-                    )}
-                    {!columnasCompactas && <td style={{ padding: "10px 12px", fontFamily: "var(--mono)" }}>{r.diario.toFixed(2)}</td>}
-                    {!columnasCompactas && <td style={{ padding: "10px 12px", fontFamily: "var(--mono)" }}>{r.diasInv}</td>}
-                    <td style={{ padding: "10px 12px" }}>
-                      <Bar cobertura={r.cobertura} objetivo={r.diasInv} />
-                    </td>
-                    <td style={{ padding: "10px 12px" }}>
-                      <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-                        <span style={{ fontFamily: "var(--mono)", fontSize: 13 }}>{r.existencia}</span>
-                        <span style={{ fontSize: 9, color: "var(--accent-int)", textTransform: "uppercase", letterSpacing: 0.3 }}>
-                          auto · {r.unidadBase}
-                        </span>
-                      </div>
-                    </td>
-                    <td style={{ padding: "6px 12px" }}>
-                      <ConvertibleInput
-                        value={r.transito}
-                        unidadBase={r.unidadBase}
-                        unidadCompra={r.unidad}
-                        factor={r.factor}
-                        onChange={(v) => update(r.id, "transito", v)}
-                      />
-                    </td>
-                    {!columnasCompactas && (
-                      <td style={{ padding: "10px 12px", fontFamily: "var(--mono)", color: r.proyeccion < 0 ? "var(--text-secondary)" : "var(--text-primary)" }}>
-                        {r.proyeccion.toFixed(1)}
-                      </td>
-                    )}
-                    <td style={{ padding: "6px 12px" }}>
-                      <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
-                          <input
-                            type="number"
-                            value={r.pedir}
-                            onChange={(e) => update(r.id, "pedir", e.target.value)}
-                            style={{ ...inputStyle, fontWeight: 500, color: r.pedir > 0 ? "var(--danger)" : "var(--ok)" }}
-                          />
-                          {r.pedirTocado ? <CheckCircle2 size={14} color="var(--ok)" /> : <Circle size={14} color="var(--border)" />}
+                      <td style={{ padding: "10px 12px" }}>
+                        <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                          <span style={{ fontFamily: "var(--mono)", fontSize: 13 }}>{r.existencia}</span>
+                          <span style={{ fontSize: 9, color: "var(--accent-int)", textTransform: "uppercase", letterSpacing: 0.3 }}>
+                            auto · {r.unidadBase}
+                          </span>
                         </div>
-                        {r.pedirSugerido !== r.pedir && (
-                          <button onClick={() => update(r.id, "pedir", r.pedirSugerido)} style={{ ...miniButtonStyle, fontSize: 10 }}>
-                            usar sugerido: {r.pedirSugerido}
+                      </td>
+                      <td style={{ padding: "6px 12px" }}>
+                        <ConvertibleInput
+                          value={r.transito}
+                          unidadBase={r.unidadBase}
+                          unidadCompra={r.unidad}
+                          factor={r.factor}
+                          onChange={(v) => update(r.id, "transito", v)}
+                        />
+                      </td>
+                      {columnasVisibles.proyeccion && (
+                        <td style={{ padding: "10px 12px", fontFamily: "var(--mono)", color: r.proyeccion < 0 ? "var(--text-secondary)" : "var(--text-primary)" }}>
+                          {r.proyeccion.toFixed(1)}
+                        </td>
+                      )}
+                      {columnasVisibles.fechaDespacho && (
+                        <td style={{ padding: "10px 12px", color: "var(--text-secondary)", whiteSpace: "nowrap" }}>{formatDate(despachoDate)}</td>
+                      )}
+                      <td style={{ ...stickyRightStyle, padding: "6px 12px" }}>
+                        <div style={{ display: "flex", alignItems: "flex-start", gap: 6 }}>
+                          <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                              <input
+                                type="number"
+                                value={r.pedir}
+                                onChange={(e) => update(r.id, "pedir", e.target.value)}
+                                style={{ ...inputStyle, fontWeight: 500, color: r.pedir > 0 ? "var(--danger)" : "var(--ok)" }}
+                              />
+                              {r.pedirTocado ? <CheckCircle2 size={14} color="var(--ok)" /> : <Circle size={14} color="var(--border)" />}
+                            </div>
+                            {r.pedirSugerido !== r.pedir && (
+                              <button onClick={() => update(r.id, "pedir", r.pedirSugerido)} style={{ ...miniButtonStyle, fontSize: 10 }}>
+                                usar sugerido: {r.pedirSugerido}
+                              </button>
+                            )}
+                          </div>
+                          <button onClick={() => eliminarFila(r.id)} style={{ ...dangerLinkStyle, marginTop: 4 }} title="Eliminar producto">
+                            <Trash2 size={12} />
                           </button>
-                        )}
-                      </div>
-                    </td>
-                    {!columnasCompactas && (
-                      <td style={{ padding: "10px 12px", color: "var(--text-secondary)", whiteSpace: "nowrap" }}>{formatDate(despachoDate)}</td>
-                    )}
-                    <td style={{ padding: "10px 12px" }}>
-                      <button onClick={() => eliminarFila(r.id)} style={dangerLinkStyle}><Trash2 size={12} /></button>
-                    </td>
-                  </tr>
+                        </div>
+                      </td>
+                    </tr>
                   </Fragment>
                 );
               })}
@@ -1845,4 +1914,44 @@ const miniButtonStyle = {
   cursor: "pointer",
   color: "var(--text-primary)",
   lineHeight: 1,
+};
+
+const thHeadStyle = {
+  padding: "11px 12px",
+  fontWeight: 500,
+  color: "var(--header-text)",
+  whiteSpace: "nowrap",
+  fontSize: 10.5,
+  textTransform: "uppercase",
+  letterSpacing: 0.5,
+};
+
+const stickyLeftStyle = {
+  position: "sticky",
+  left: 0,
+  zIndex: 2,
+  background: "var(--card)",
+};
+
+const stickyLeftHeaderStyle = {
+  position: "sticky",
+  left: 0,
+  zIndex: 5,
+  background: "var(--header-bg)",
+};
+
+const stickyRightStyle = {
+  position: "sticky",
+  right: 0,
+  zIndex: 2,
+  background: "var(--card)",
+  boxShadow: "-2px 0 4px rgba(0,0,0,0.08)",
+};
+
+const stickyRightHeaderStyle = {
+  position: "sticky",
+  right: 0,
+  zIndex: 5,
+  background: "var(--header-bg)",
+  boxShadow: "-2px 0 4px rgba(0,0,0,0.08)",
 };
